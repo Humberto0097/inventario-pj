@@ -22,11 +22,10 @@ def check_password():
         return True
 
     def password_entered():
-        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+        if st.session_state.get("password", "") == st.secrets["APP_PASSWORD"]:
             # Guardar la cookie por 30 días
             cookie_manager.set("auth_status", "logged_in", expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # no guardar la contraseña real
         else:
             st.session_state["password_correct"] = False
 
