@@ -193,6 +193,62 @@ elif menu == "📦 Catálogo Maestro":
     else:
         st.info("Catálogo vacío.")
 
+elif menu == "📊 Pedidos DRP (Próximamente)":
+    st.title("📊 Módulo de Pedidos (DRP Inteligente)")
+    st.markdown("Copia y pega la data de SAP. ZailasPH calculará el pedido sugerido al instante.")
+    
+    # 1. Cargar productos
+    res = supabase.table("productos_maestro").select("*").execute()
+    df_maestro = pd.DataFrame(res.data)
+    
+    if df_maestro.empty:
+        st.warning("⚠️ El Catálogo Maestro está vacío. Añade productos primero.")
+    else:
+        categorias_disp = df_maestro['categoria'].unique().tolist()
+        cat_ped = st.selectbox("Categoría a Pedir", categorias_disp)
+        
+        df_cat = df_maestro[df_maestro['categoria'] == cat_ped].copy()
+        
+        st.subheader("Configuración de Días")
+        dias_a_cubrir = st.number_input("Días de Inventario a Cubrir (Días hasta el PRÓXIMO ingreso después de este)", min_value=1.0, value=3.0, step=0.5)
+        
+        st.markdown("### Tabla DRP Editable")
+        st.caption("📝 Tip: Puedes copiar desde tu Excel y pegar directamente en las columnas 'Consumo Diario', 'Stock SAP' y 'Tránsito'.")
+        
+        # Preparamos el dataframe para el editor
+        df_editor = df_cat[['codigo_sap', 'descripcion', 'paquete_kg']].copy()
+        df_editor['Consumo Diario Promedio'] = 0.0
+        df_editor['Stock SAP'] = 0.0
+        df_editor['Tránsito'] = 0.0
+        
+        # Editor interactivo
+        edited_df = st.data_editor(
+            df_editor,
+            column_config={
+                "codigo_sap": st.column_config.TextColumn("Cód. SAP", disabled=True),
+                "descripcion": st.column_config.TextColumn("Insumo", disabled=True),
+                "paquete_kg": st.column_config.NumberColumn("Factor Convert.", disabled=True),
+                "Consumo Diario Promedio": st.column_config.NumberColumn("Consumo Diario Prom.", min_value=0.0, format="%.2f"),
+                "Stock SAP": st.column_config.NumberColumn("Stock Actual SAP", min_value=0.0, format="%.2f"),
+                "Tránsito": st.column_config.NumberColumn("Mercadería en Tránsito", min_value=0.0, format="%.2f"),
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        st.markdown("---")
+        st.subheader("📦 Resultado: Pedido Sugerido para ME51N")
+        
+        resultado_df = edited_df.copy()
+        # Lógica: Lo que voy a gastar en los días a cubrir, menos lo que ya tengo (Stock + Transito)
+        resultado_df['Pedido (Unidades)'] = (resultado_df['Consumo Diario Promedio'] * dias_a_cubrir) - (resultado_df['Stock SAP'] + resultado_df['Tránsito'])
+        
+        # Evitar números negativos
+        resultado_df['Pedido (Unidades)'] = resultado_df['Pedido (Unidades)'].apply(lambda x: max(0, round(x, 2)))
+        
+        # Mostrar tabla final limpia
+        st.dataframe(resultado_df[['codigo_sap', 'descripcion', 'Pedido (Unidades)']], use_container_width=True, hide_index=True)
+
 else:
     st.title("🚧 Módulo en Construcción")
-    st.markdown("Estamos construyendo esta sección (Fase 2). ¡Pronto ZailasPH calculará los pedidos y varianzas aquí!")
+    st.markdown("Estamos construyendo esta sección (Fase 2). ¡Pronto ZailasPH calculará las varianzas de consumo aquí!")
