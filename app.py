@@ -1,35 +1,30 @@
 import streamlit as st
 import datetime
-import math
 import pandas as pd
 from supabase import create_client, Client
 import extra_streamlit_components as stx
+import re
 
 # Configuración de página
-st.set_page_config(page_title="Sistema Predictivo de Pedidos PJ", layout="wide")
+st.set_page_config(page_title="ZailasPH - Gestión de Inventarios", layout="wide")
 
 # Instanciar el Cookie Manager sin caché para evitar advertencias de widgets
 cookie_manager = stx.CookieManager()
 
-
 # ================= SEGURIDAD (LOGIN PERSISTENTE) =================
 def check_password():
-    """Retorna True si el usuario tiene la cookie correcta o ingresa la clave."""
-    # Leer la cookie (necesita estar arriba para que se lea al cargar)
     auth_status = cookie_manager.get(cookie="auth_status")
-    
     if auth_status == "logged_in":
         return True
 
     def password_entered():
         if st.session_state.get("password", "") == st.secrets["APP_PASSWORD"]:
-            # Guardar la cookie por 30 días
             cookie_manager.set("auth_status", "logged_in", expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
             st.session_state["password_correct"] = True
         else:
             st.session_state["password_correct"] = False
 
-    st.markdown("<h3 style='text-align: center;'>🔒 Acceso Restringido</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center;'>🔒 Acceso Restringido - ZailasPH</h3>", unsafe_allow_html=True)
     st.text_input("Introduce tu Contraseña Maestra", type="password", on_change=password_entered, key="password")
     
     if "password_correct" in st.session_state and not st.session_state["password_correct"]:
@@ -38,7 +33,7 @@ def check_password():
     return False
 
 if not check_password():
-    st.stop()  # Detiene la ejecución de la app si no está logueado
+    st.stop()
 
 # ================= CONEXIÓN A SUPABASE =================
 @st.cache_resource
@@ -53,49 +48,15 @@ except Exception as e:
     st.error("Error al conectar a Supabase. Verifica tus Secretos.")
     st.stop()
 
-# Título Principal
-st.title("🍕 Sistema Predictivo de Pedidos - Papa John's")
-st.markdown("---")
-
-# ----------------- SIDEBAR (Gestión de Insumos) -----------------
-st.sidebar.header("📦 Gestión de Insumos")
-with st.sidebar.expander("➕ Añadir Nuevo Producto"):
-    with st.form("form_nuevo_producto"):
-        nuevo_nombre = st.text_input("Nombre del Insumo")
-        nueva_categoria = st.selectbox("Categoría", ["Vegetales", "Gaseosas", "Perecibles", "Cajas"])
-        nueva_cap_max = st.number_input("Capacidad Máxima (Unidades)", min_value=1.0, value=100.0, step=1.0)
-        nuevo_uni_paq = st.number_input("Unidades por Paquete", min_value=1.0, value=1.0, step=1.0)
-        
-        if st.form_submit_button("Guardar Producto"):
-            if nuevo_nombre.strip() == "":
-                st.error("El nombre no puede estar vacío.")
-            else:
-                try:
-                    data, count = supabase.table("productos").insert({
-                        "nombre": nuevo_nombre,
-                        "categoria": nueva_categoria,
-                        "capacidad_maxima": nueva_cap_max,
-                        "unidades_por_paquete": nuevo_uni_paq
-                    }).execute()
-                    st.success(f"Producto '{nuevo_nombre}' agregado a la nube.")
-                except Exception as e:
-                    st.error(f"Error al guardar: {e}")
-
+# ================= MENÚ LATERAL =================
+st.sidebar.title("🍕 ZailasPH")
 st.sidebar.markdown("---")
-st.sidebar.header("🗓️ Configuración de Pedido")
-dia_pedido = st.sidebar.selectbox("Día de Pedido Actual", ["Lunes", "Miércoles", "Viernes"])
-
-if dia_pedido == "Lunes":
-    dias_gap = 2
-    descripcion_gap = "Llega el Miércoles. Gap de 2 días (Lunes y Martes - Regulares)."
-elif dia_pedido == "Miércoles":
-    dias_gap = 2
-    descripcion_gap = "Llega el Viernes. Gap de 2 días (Miércoles y Jueves - Regulares)."
-else: # Viernes
-    dias_gap = 3
-    descripcion_gap = "Llega el Lunes. Gap de 3 días (Viernes, Sábado y Domingo - Fuertes)."
-
-st.sidebar.info(descripcion_gap)
+menu = st.sidebar.radio("Navegación", [
+    "🏷️ Calculadora de Fechados",
+    "📦 Catálogo Maestro",
+    "📊 Pedidos DRP (Próximamente)",
+    "📉 Varianza (Próximamente)"
+])
 
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 Cerrar Sesión"):
@@ -103,167 +64,135 @@ if st.sidebar.button("🚪 Cerrar Sesión"):
     st.session_state.clear()
     st.rerun()
 
+# ================= FUNCIONES AUXILIARES =================
+def calcular_vencimiento(regla_texto):
+    """Parsea el texto de vida útil (ej. '10h', '7', '11:59') y calcula la fecha/hora de vencimiento."""
+    if not regla_texto or regla_texto.strip() == "" or regla_texto.lower() == "se":
+        return None
+    
+    ahora = datetime.datetime.now()
+    regla = regla_texto.strip().lower()
+    
+    # Regla de fin de día (11:59)
+    if "11:59" in regla:
+        vencimiento = ahora.replace(hour=23, minute=59, second=59)
+        if vencimiento < ahora:
+            vencimiento += datetime.timedelta(days=1)
+        return vencimiento
+        
+    # Regla de horas (ej. '10h', '12h')
+    match_horas = re.search(r'(\d+)\s*h', regla)
+    if match_horas:
+        horas = int(match_horas.group(1))
+        return ahora + datetime.timedelta(hours=horas)
+        
+    # Regla de minutos (ej. '30m')
+    match_min = re.search(r'(\d+)\s*m', regla)
+    if match_min:
+        minutos = int(match_min.group(1))
+        return ahora + datetime.timedelta(minutes=minutos)
+        
+    # Regla de días (solo números, ej. '7', '14')
+    match_dias = re.search(r'^(\d+)$', regla)
+    if match_dias:
+        dias = int(match_dias.group(1))
+        vencimiento = ahora + datetime.timedelta(days=dias)
+        return vencimiento.replace(hour=23, minute=59, second=59)
+        
+    return None
 
-# Cargar productos disponibles desde la nube
-try:
-    response = supabase.table("productos").select("*").execute()
-    df_productos = pd.DataFrame(response.data)
-except Exception as e:
-    st.error("No se pudieron cargar los productos de la nube.")
-    df_productos = pd.DataFrame()
+# ================= VISTAS =================
 
-# ----------------- PESTAÑAS -----------------
-tab1, tab2 = st.tabs(["📝 Realizar Pedido", "📈 Dashboard Analítico"])
-
-with tab1:
-    if df_productos.empty:
-        st.warning("⚠️ No hay productos registrados en la base de datos.")
+if menu == "🏷️ Calculadora de Fechados":
+    st.title("🏷️ Fechados y Vida Útil (PEPS)")
+    st.markdown("Calcula rápidamente qué fecha y hora debes poner en la etiqueta al abrir o preparar un insumo.")
+    
+    # Cargar catálogo
+    res = supabase.table("productos_maestro").select("*").execute()
+    df = pd.DataFrame(res.data)
+    
+    if df.empty:
+        st.warning("⚠️ No hay productos en el Catálogo Maestro. Ve a la pestaña 'Catálogo Maestro' para agregar algunos.")
     else:
-        # Selector Dinámico
-        st.subheader("Selección de Producto")
-        producto_seleccionado = st.selectbox("Elige el insumo a calcular", df_productos['nombre'].tolist())
+        categorias = ["Todos"] + df['categoria'].unique().tolist()
+        cat_seleccionada = st.selectbox("Filtrar por Categoría", categorias)
         
-        # Obtener datos del producto seleccionado
-        prod_data = df_productos[df_productos['nombre'] == producto_seleccionado].iloc[0]
-        CAPACIDAD_MAXIMA = prod_data['capacidad_maxima']
-        UNIDADES_POR_PAQUETE = prod_data['unidades_por_paquete']
-        CATEGORIA = prod_data['categoria']
+        if cat_seleccionada != "Todos":
+            df = df[df['categoria'] == cat_seleccionada]
+            
+        producto_nombre = st.selectbox("Selecciona el Insumo / Prep", df['descripcion'].tolist())
         
-        st.markdown(f"**Categoría:** `{CATEGORIA}` | **Capacidad Máx:** `{CAPACIDAD_MAXIMA}` | **Unidades/Paquete:** `{UNIDADES_POR_PAQUETE}`")
+        prod_data = df[df['descripcion'] == producto_nombre].iloc[0]
         
-        # Memoria Predictiva (Historial)
-        valor_defecto_consumo = 100.0
-        try:
-            res_historial = supabase.table("historial_pedidos").select("consumo_quincenal").eq("producto_nombre", producto_seleccionado).execute()
-            if res_historial.data and len(res_historial.data) > 0:
-                avg_consumo = sum([item['consumo_quincenal'] for item in res_historial.data]) / len(res_historial.data)
-                valor_defecto_consumo = round(avg_consumo, 2)
-                st.info(f"🧠 **Asistente Inteligente:** Basado en el historial, el consumo promedio quincenal sugerido es **{valor_defecto_consumo}**.")
-        except Exception as e:
-            pass
-        
-        # Entradas
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Entradas del Usuario")
-            consumo_14_dias = st.number_input("Consumo de 14 días (Quincenal)", min_value=0.0, value=float(valor_defecto_consumo), step=1.0)
-            stock_actual = st.number_input("Stock Actual Físico (Unidades)", min_value=0.0, value=0.0, step=1.0)
-            mercaderia_transito = st.number_input("Mercadería en Tránsito (Llega hoy)", min_value=0.0, value=0.0, step=1.0)
-            
-        with col2:
-            st.subheader("Datos del Producto")
-            col2_1, col2_2 = st.columns(2)
-            with col2_1:
-                st.metric(label="Capacidad Máxima", value=f"{CAPACIDAD_MAXIMA} unid.")
-            with col2_2:
-                st.metric(label="Unidades por Paquete", value=f"{UNIDADES_POR_PAQUETE} unid.")
-        
-        # Cálculos
-        if st.button("Calcular Pedido Ponderado y Guardar", type="primary"):
-            consumo_semanal = consumo_14_dias / 2.0
-            valor_base_diario = consumo_semanal / 10.0
-            
-            consumo_diario_regular = valor_base_diario * 1.0
-            consumo_diario_fuerte = valor_base_diario * 2.0
-            
-            if dia_pedido == "Lunes" or dia_pedido == "Miércoles":
-                gasto_proyectado = 2 * consumo_diario_regular
-            else: # Viernes
-                gasto_proyectado = 3 * consumo_diario_fuerte
-                
-            stock_total_hoy = stock_actual + mercaderia_transito
-            stock_al_recibir = max(0, stock_total_hoy - gasto_proyectado)
-            unidades_a_pedir = max(0, CAPACIDAD_MAXIMA - stock_al_recibir)
-            paquetes_a_pedir = round(unidades_a_pedir / UNIDADES_POR_PAQUETE)
-            
-            # Guardar en BD Supabase
-            try:
-                supabase.table("historial_pedidos").insert({
-                    "dia_pedido": dia_pedido,
-                    "producto_nombre": producto_seleccionado,
-                    "consumo_quincenal": consumo_14_dias,
-                    "stock_actual": stock_total_hoy,
-                    "dias_gap": dias_gap,
-                    "paquetes_a_pedir": paquetes_a_pedir
-                }).execute()
-                
-                st.success("✅ Pedido calculado y respaldado de forma segura en la Nube.")
-                
-                # Resultado
-                st.markdown(
-                    f"""
-                    <div style="text-align: center; padding: 20px; border-radius: 10px; background-color: #f0f2f6;">
-                        <h1 style="color: #1e3d59; font-size: 3rem; margin-bottom: 0;">{paquetes_a_pedir}</h1>
-                        <h3 style="color: #4a4a4a; margin-top: 0;">Paquetes a Pedir de {producto_seleccionado}</h3>
-                    </div>
-                    """, 
-                    unsafe_allow_html=True
-                )
-                
-                with st.expander("Ver desglose del cálculo"):
-                    st.write(f"- **Consumo Quincenal (14 días):** {consumo_14_dias:.2f}")
-                    st.write(f"- **Stock Físico Actual:** {stock_actual:.2f}")
-                    if mercaderia_transito > 0:
-                        st.write(f"- **Mercadería en Tránsito:** {mercaderia_transito:.2f}")
-                    st.write(f"- **Stock Total Hoy:** {stock_total_hoy:.2f}")
-                    st.write(f"- **Gasto Proyectado Total (Gap):** {gasto_proyectado:.2f}")
-                    st.write(f"- **Stock Proyectado al Recibir (Total Hoy - Gap):** {stock_al_recibir:.2f}")
-                    st.write(f"- **Unidades a Pedir:** {unidades_a_pedir:.2f}")
-                    st.write(f"- **Paquetes:** {paquetes_a_pedir}")
-            except Exception as e:
-                st.error(f"Error al guardar en la base de datos: {e}")
-
-with tab2:
-    st.header("📈 Dashboard Analítico y Eficiencia")
-    
-    try:
-        res_dash = supabase.table("historial_pedidos").select("*").execute()
-        df_historial = pd.DataFrame(res_dash.data)
-    except Exception as e:
-        df_historial = pd.DataFrame()
-        
-    if df_historial.empty:
-        st.info("Aún no hay suficientes datos para mostrar en el Dashboard. Guarda algunos pedidos primero.")
-    else:
-        # Asegurar tipo fecha
-        df_historial['fecha_registro'] = pd.to_datetime(df_historial['fecha_registro'])
-        df_historial['Mes'] = df_historial['fecha_registro'].dt.to_period('M').astype(str)
-        
-        # Filtro de producto
-        prod_filtro = st.selectbox("Selecciona producto para analizar", ["Todos"] + df_productos['nombre'].tolist())
-        
-        if prod_filtro != "Todos":
-            df_filtrado = df_historial[df_historial['producto_nombre'] == prod_filtro]
-            capacidad_max_filtro = df_productos[df_productos['nombre'] == prod_filtro].iloc[0]['capacidad_maxima']
-        else:
-            df_filtrado = df_historial
-            capacidad_max_filtro = None
-            
-        if df_filtrado.empty:
-            st.warning("No hay pedidos de este producto.")
-        else:
-            st.subheader("Evolución de Pedidos (Paquetes)")
-            df_tendencia = df_filtrado.groupby(df_filtrado['fecha_registro'].dt.date)['paquetes_a_pedir'].sum()
-            st.line_chart(df_tendencia)
-            
-            meses_agrupados = df_filtrado.groupby('Mes')['paquetes_a_pedir'].sum()
-            if not meses_agrupados.empty:
-                mes_pico = meses_agrupados.idxmax()
-                val_pico = meses_agrupados.max()
-                st.info(f"🏆 **Mes con mayor demanda:** {mes_pico} ({val_pico} paquetes)")
-            
-            # Auditoría de Ineficiencia ("Pedidos en vano")
-            st.subheader("⚠️ Auditoría de Pedidos Ineficientes")
-            st.write("Identifica pedidos realizados cuando el stock en almacén aún era muy alto (dinero inmovilizado).")
-            
-            if prod_filtro != "Todos":
-                umbral_ineficiencia = capacidad_max_filtro * 0.70
-                df_ineficientes = df_filtrado[df_filtrado['stock_actual'] >= umbral_ineficiencia]
-                
-                if df_ineficientes.empty:
-                    st.success("✅ No se detectaron pedidos con exceso de stock para este producto.")
-                else:
-                    st.error(f"Se encontraron {len(df_ineficientes)} registros donde el stock era >= 70% de la capacidad máxima.")
-                    st.dataframe(df_ineficientes[['fecha_registro', 'dia_pedido', 'stock_actual', 'paquetes_a_pedir']])
+            st.info(f"**Vida Útil (Preparación/Abierto):** {prod_data['vida_preparacion']}")
+            venc_prep = calcular_vencimiento(prod_data['vida_preparacion'])
+            if venc_prep:
+                st.success(f"### Etiquetar para:\n## {venc_prep.strftime('%d/%m/%Y a las %I:%M %p')}")
             else:
-                st.write("Por favor, selecciona un producto específico arriba para habilitar el análisis de ineficiencia.")
+                st.markdown("*No hay regla calculable para preparación. Revisar empaque.*")
+                
+        with col2:
+            st.warning(f"**Vida Útil (Línea de Producción):** {prod_data['vida_linea']}")
+            venc_linea = calcular_vencimiento(prod_data['vida_linea'])
+            if venc_linea:
+                st.success(f"### Etiquetar para:\n## {venc_linea.strftime('%d/%m/%Y a las %I:%M %p')}")
+            else:
+                st.markdown("*No hay regla calculable para línea.*")
+
+elif menu == "📦 Catálogo Maestro":
+    st.title("📦 Gestión del Catálogo Maestro")
+    st.markdown("Añade los insumos con sus tiempos de vida útil (R, P, L) según tus tablas manuales.")
+    
+    with st.expander("➕ Añadir Nuevo Insumo / Prep", expanded=True):
+        with st.form("form_catalogo"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                cod_sap = st.text_input("Código SAP (Opcional)")
+            with col2:
+                categoria = st.selectbox("Categoría", ["Carnicos", "Quesos", "Salsas", "Vegetales", "Preps", "Limpieza", "Otros", "Masas", "Cajas", "Gaseosas"])
+            with col3:
+                desc = st.text_input("Descripción del Producto")
+                
+            st.markdown("#### Tiempos de Vida Útil")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                vida_r = st.text_input("Recepción (R) - Ej: '14', 'Se'")
+            with c2:
+                vida_p = st.text_input("Preparación (P) - Ej: '10h', '7'")
+            with c3:
+                vida_l = st.text_input("Línea (L) - Ej: '11:59', '1'")
+                
+            paquete_kg = st.number_input("Factor de Conversión (Kg por caja/paquete para SAP)", min_value=0.0, value=1.0, step=0.1)
+            
+            if st.form_submit_button("Guardar en Catálogo"):
+                if desc.strip() == "":
+                    st.error("La descripción es obligatoria.")
+                else:
+                    try:
+                        supabase.table("productos_maestro").insert({
+                            "codigo_sap": cod_sap,
+                            "categoria": categoria,
+                            "descripcion": desc,
+                            "vida_recepcion": vida_r,
+                            "vida_preparacion": vida_p,
+                            "vida_linea": vida_l,
+                            "paquete_kg": paquete_kg
+                        }).execute()
+                        st.success(f"Insumo '{desc}' guardado correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                        
+    # Mostrar catálogo actual
+    st.subheader("Catálogo Actual en Supabase")
+    res = supabase.table("productos_maestro").select("*").execute()
+    if res.data:
+        st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+    else:
+        st.info("Catálogo vacío.")
+
+else:
+    st.title("🚧 Módulo en Construcción")
+    st.markdown("Estamos construyendo esta sección (Fase 2). ¡Pronto ZailasPH calculará los pedidos y varianzas aquí!")
