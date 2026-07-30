@@ -48,6 +48,9 @@ except Exception as e:
     st.error("Error al conectar a Supabase. Verifica tus Secretos.")
     st.stop()
 
+if 'carrito_pedido' not in st.session_state:
+    st.session_state['carrito_pedido'] = []
+
 # ================= MENÚ LATERAL =================
 st.sidebar.title("🍕 ZailasPH")
 st.sidebar.markdown("---")
@@ -55,6 +58,7 @@ menu = st.sidebar.radio("Navegación", [
     "🏷️ Calculadora de Fechados",
     "📦 Catálogo Maestro",
     "📊 Pedidos DRP",
+    "🛒 Mi Pedido Final",
     "📉 Varianza de Consumo",
     "📈 Analytics e Historial"
 ])
@@ -382,31 +386,74 @@ elif menu == "📊 Pedidos DRP":
         st.dataframe(resultado_df[['codigo_sap', 'descripcion', 'paquete_kg', 'Pedido Bruto', 'Pedido Exacto ME51N']], use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        if st.button("💾 Guardar este Pedido en el Historial", type="primary"):
-            with st.spinner("Guardando historial en la nube..."):
-                try:
-                    fecha_hoy = datetime.datetime.now().strftime('%Y-%m-%d')
-                    insert_list = []
-                    for index, row in resultado_df.iterrows():
-                        if row['Pedido Exacto ME51N'] > 0:
+        if st.button(f"🛒 Añadir {cat_ped} al Carrito", type="primary"):
+            agregados = 0
+            for index, row in resultado_df.iterrows():
+                if row['Pedido Exacto ME51N'] > 0:
+                    item = {
+                        "codigo_sap": str(row['codigo_sap']),
+                        "descripcion": row['descripcion'],
+                        "categoria": cat_ped,
+                        "cajas_pedidas": float(row['Pedido Exacto ME51N'])
+                    }
+                    st.session_state['carrito_pedido'].append(item)
+                    agregados += 1
+            if agregados > 0:
+                st.success(f"✅ {agregados} insumos de {cat_ped} añadidos al carrito. Cambia de categoría para seguir pidiendo o ve a '🛒 Mi Pedido Final'.")
+            else:
+                st.info("No hay cajas para pedir en esta categoría (todo está en 0).")
+
+elif menu == "🛒 Mi Pedido Final":
+    st.title("🛒 Carrito de Pedidos Consolidado")
+    st.markdown("Aquí está tu lista final con todas las categorías que fuiste calculando. Cópiala a SAP ME51N de un solo golpe.")
+    
+    carrito = st.session_state.get('carrito_pedido', [])
+    
+    if len(carrito) == 0:
+        st.info("Tu carrito está vacío. Ve a la pestaña 'Pedidos DRP' y empieza a añadir categorías.")
+    else:
+        df_carrito = pd.DataFrame(carrito)
+        
+        st.subheader("📋 Resumen para ME51N")
+        # Mostrar tabla final agrupando por si hay duplicados
+        df_final = df_carrito.groupby(['codigo_sap', 'descripcion', 'categoria'])['cajas_pedidas'].sum().reset_index()
+        st.dataframe(df_final[['codigo_sap', 'descripcion', 'categoria', 'cajas_pedidas']], use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("💾 Guardar Pedido Final en Historial", type="primary", use_container_width=True):
+                with st.spinner("Guardando todo el consolidado en la nube..."):
+                    try:
+                        fecha_hoy = datetime.datetime.now().strftime('%Y-%m-%d')
+                        insert_list = []
+                        for index, row in df_final.iterrows():
                             insert_list.append({
                                 "fecha_pedido": fecha_hoy,
                                 "codigo_sap": str(row['codigo_sap']),
                                 "descripcion": row['descripcion'],
-                                "categoria": cat_ped,
-                                "cajas_pedidas": float(row['Pedido Exacto ME51N'])
+                                "categoria": row['categoria'],
+                                "cajas_pedidas": float(row['cajas_pedidas'])
                             })
-                    if insert_list:
-                        supabase.table("historial_pedidos").insert(insert_list).execute()
-                    st.success("✅ Pedido guardado exitosamente. Ve a la pestaña 'Analytics' para ver tus gráficos.")
-                except Exception as e:
-                    st.error(f"Error al guardar historial (Asegúrate de haber ejecutado el SQL en Supabase): {e}")
+                        if insert_list:
+                            supabase.table("historial_pedidos").insert(insert_list).execute()
+                        st.success("🎉 ¡Pedido consolidado guardado exitosamente!")
+                        st.session_state['carrito_pedido'] = [] # Vaciar carrito
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar (Asegúrate de haber creado la tabla en Supabase): {e}")
+                        
+        with col2:
+            if st.button("🗑️ Vaciar Carrito (Empezar de nuevo)", use_container_width=True):
+                st.session_state['carrito_pedido'] = []
+                st.rerun()
 
 elif menu == "📉 Varianza de Consumo":
     st.title("📉 Varianza de Consumo (MB51)")
     st.markdown("Pega aquí tu exportación de SAP (MB51) de los **últimos 28 días** para calcular tu Consumo Diario Promedio real.")
     
-    st.info("💡 **Clases de movimiento consideradas:** Ajustes (701-702), Receta (951-952), Merma (957-958), Refrigerio (967-968) y Consumo Interno (975-976).")
+    st.info("💡 **Clases de movimiento consideradas:** Receta (951-952), Refrigerio (967-968) y Consumo Interno (975-976).")
     
     # Editor para pegar data de MB51
     df_mb51 = pd.DataFrame(columns=["Código SAP", "Insumo", "Clase Mov.", "Cantidad"])
@@ -419,8 +466,8 @@ elif menu == "📉 Varianza de Consumo":
             st.warning("Pega los datos primero.")
         else:
             try:
-                # Filtrar solo los movimientos relevantes y convertir cantidades
-                movs_validos = ['701', '702', '951', '952', '957', '958', '967', '968', '975', '976']
+                # Filtrar solo los movimientos relevantes (Receta, Refrigerio, Consumo Interno)
+                movs_validos = ['951', '952', '967', '968', '975', '976']
                 
                 # Asegurar que Clase Mov. es string
                 edited_mb51['Clase Mov.'] = edited_mb51['Clase Mov.'].astype(str)
