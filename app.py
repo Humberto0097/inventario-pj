@@ -8,22 +8,33 @@ import re
 # Configuración de página
 st.set_page_config(page_title="ZailasPH - Gestión de Inventarios", layout="wide")
 
-# Instanciar el Cookie Manager sin caché para evitar advertencias de widgets
-cookie_manager = stx.CookieManager()
+# Instanciar el Cookie Manager con una clave única para asegurar que se cargue rápido
+cookie_manager = stx.CookieManager(key="auth_manager")
 
 # ================= SEGURIDAD (LOGIN PERSISTENTE) =================
 def check_password():
-    auth_status = cookie_manager.get(cookie="auth_status")
-    if auth_status == "logged_in":
+    # 1. Si ya verificamos la contraseña en esta sesión rápida, pasamos.
+    if st.session_state.get("password_correct", False):
         return True
 
+    # 2. Revisamos si existe la cookie guardada en el navegador
+    auth_status = cookie_manager.get(cookie="auth_status")
+    if auth_status == "logged_in":
+        st.session_state["password_correct"] = True
+        return True
+
+    # 3. Función que se ejecuta cuando el usuario escribe la contraseña y da Enter
     def password_entered():
         if st.session_state.get("password", "") == st.secrets["APP_PASSWORD"]:
-            cookie_manager.set("auth_status", "logged_in", expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+            # Guardamos la cookie por 30 días
+            exp_date = datetime.datetime.now() + datetime.timedelta(days=30)
+            cookie_manager.set("auth_status", "logged_in", expires_at=exp_date)
             st.session_state["password_correct"] = True
+            del st.session_state["password"] # Limpiamos por seguridad
         else:
             st.session_state["password_correct"] = False
 
+    # 4. Si no hay sesión ni cookie, mostramos el candado
     st.markdown("<h3 style='text-align: center;'>🔒 Acceso Restringido - ZailasPH</h3>", unsafe_allow_html=True)
     st.text_input("Introduce tu Contraseña Maestra", type="password", on_change=password_entered, key="password")
     
@@ -33,6 +44,8 @@ def check_password():
     return False
 
 if not check_password():
+    # Mostramos un mensajito mientras la cookie se lee del navegador
+    st.caption("Si acabas de recargar la página, espera 1 segundo para que el sistema recuerde tu sesión de forma segura...")
     st.stop()
 
 # ================= CONEXIÓN A SUPABASE =================
@@ -382,14 +395,35 @@ elif menu == "📊 Pedidos DRP":
             
         resultado_df['Pedido Exacto ME51N'] = resultado_df.apply(lambda row: redondear_a_caja(row['Pedido Bruto'], row['paquete_kg']), axis=1)
         
-        # Mostrar tabla final limpia
-        st.dataframe(resultado_df[['codigo_sap', 'descripcion', 'paquete_kg', 'Pedido Bruto', 'Pedido Exacto ME51N']], use_container_width=True, hide_index=True)
+        # Preparamos la tabla interactiva para que el usuario elija qué pedir
+        resultado_df['🛒 Añadir'] = resultado_df['Pedido Exacto ME51N'] > 0 # Por defecto, marca los que tienen > 0
+        
+        st.markdown("### 🛒 Selecciona lo que vas a añadir al carrito:")
+        st.caption("Marca o desmarca las casillas de la izquierda para elegir exactamente qué insumos llevar al pedido.")
+        
+        columnas_mostrar = ['🛒 Añadir', 'codigo_sap', 'descripcion', 'paquete_kg', 'Pedido Bruto', 'Pedido Exacto ME51N']
+        df_para_editar = resultado_df[columnas_mostrar].copy()
+        
+        resultado_final_editado = st.data_editor(
+            df_para_editar,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "🛒 Añadir": st.column_config.CheckboxColumn("🛒 Añadir al Carrito", help="Selecciona los insumos que vas a pedir hoy"),
+                "codigo_sap": st.column_config.TextColumn("Cód. SAP", disabled=True),
+                "descripcion": st.column_config.TextColumn("Insumo", disabled=True),
+                "paquete_kg": st.column_config.NumberColumn("Factor", disabled=True),
+                "Pedido Bruto": st.column_config.NumberColumn("Bruto", disabled=True, format="%.2f"),
+                "Pedido Exacto ME51N": st.column_config.NumberColumn("Pedido Cajas", disabled=True, format="%.2f")
+            }
+        )
 
         st.markdown("---")
-        if st.button(f"🛒 Añadir {cat_ped} al Carrito", type="primary"):
+        if st.button(f"🛒 Añadir SELECCIONADOS de {cat_ped} al Carrito", type="primary"):
             agregados = 0
-            for index, row in resultado_df.iterrows():
-                if row['Pedido Exacto ME51N'] > 0:
+            for index, row in resultado_final_editado.iterrows():
+                # Solo añadir los que tengan el checkbox activado y un pedido > 0
+                if row['🛒 Añadir'] == True and row['Pedido Exacto ME51N'] > 0:
                     item = {
                         "codigo_sap": str(row['codigo_sap']),
                         "descripcion": row['descripcion'],
@@ -401,7 +435,7 @@ elif menu == "📊 Pedidos DRP":
             if agregados > 0:
                 st.success(f"✅ {agregados} insumos de {cat_ped} añadidos al carrito. Cambia de categoría para seguir pidiendo o ve a '🛒 Mi Pedido Final'.")
             else:
-                st.info("No hay cajas para pedir en esta categoría (todo está en 0).")
+                st.info("No marcaste ningún insumo o los marcados tienen 0 cajas.")
 
 elif menu == "🛒 Mi Pedido Final":
     st.title("🛒 Carrito de Pedidos Consolidado")
