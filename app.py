@@ -4,6 +4,8 @@ import pandas as pd
 from supabase import create_client, Client
 import extra_streamlit_components as stx
 import re
+from PIL import Image
+import pytesseract
 
 # Configuración de página
 st.set_page_config(page_title="ZailasPH - Gestión de Inventarios", layout="wide")
@@ -55,7 +57,8 @@ menu = st.sidebar.radio("Navegación", [
     "🏷️ Calculadora de Fechados",
     "📦 Catálogo Maestro",
     "📊 Pedidos DRP",
-    "📉 Varianza de Consumo"
+    "📉 Varianza de Consumo",
+    "📸 Lector Visual (OCR)"
 ])
 
 st.sidebar.markdown("---")
@@ -342,3 +345,28 @@ elif menu == "📉 Varianza de Consumo":
                 
             except Exception as e:
                 st.error(f"Error al calcular: Asegúrate de pegar los números correctamente. Detalle: {e}")
+
+elif menu == "📸 Lector Visual (OCR)":
+    st.title("📸 Lector de Imágenes (OCR)")
+    st.markdown("Sube fotos de tus guías, facturas o pantallas de SAP para extraer el texto automáticamente usando IA.")
+    
+    st.info("💡 **Ideal para:** Pasar notas físicas a texto digital sin teclear.")
+    
+    uploaded_image = st.file_uploader("Sube una imagen (PNG, JPG)", type=["png", "jpg", "jpeg"])
+    if uploaded_image is not None:
+        try:
+            image = Image.open(uploaded_image)
+            st.image(image, caption="Imagen Subida", use_container_width=True)
+            
+            if st.button("🔍 Extraer Texto de la Imagen", type="primary"):
+                with st.spinner("⏳ Leyendo imagen con Tesseract OCR... Esto puede tardar unos segundos."):
+                    texto_extraido = pytesseract.image_to_string(image, lang="spa")
+                    
+                    if texto_extraido and texto_extraido.strip():
+                        st.success("✅ ¡Texto extraído con éxito!")
+                        st.text_area("Texto Encontrado:", value=texto_extraido, height=300)
+                    else:
+                        st.warning("⚠️ No se detectó texto legible en la imagen.")
+        except Exception as e:
+            st.error(f"Error procesando la imagen. Detalle: {e}")
+            st.info("Nota técnica: Si estás probando esto localmente en Windows, necesitas tener instalado 'Tesseract OCR' en tu computadora. En la nube (Streamlit Cloud) ya hemos configurado 'packages.txt' para que funcione.")

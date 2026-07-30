@@ -2,3 +2,6 @@ streamlit
 pandas
 supabase
 extra-streamlit-components
+openpyxl
+pytesseract
+Pillow
