@@ -189,7 +189,60 @@ elif menu == "📦 Catálogo Maestro":
     st.subheader("Catálogo Actual en Supabase")
     res = supabase.table("productos_maestro").select("*").execute()
     if res.data:
-        st.dataframe(pd.DataFrame(res.data), use_container_width=True)
+        df_maestro = pd.DataFrame(res.data)
+        st.dataframe(df_maestro, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("🛠️ Editar o Eliminar Insumo")
+        insumo_a_modificar = st.selectbox("Selecciona un insumo para modificar/eliminar", df_maestro['descripcion'].tolist())
+        insumo_data = df_maestro[df_maestro['descripcion'] == insumo_a_modificar].iloc[0]
+        insumo_id = int(insumo_data['id'])
+        
+        col_ed1, col_ed2 = st.columns(2)
+        with col_ed1:
+            if st.button("🗑️ Eliminar Insumo", type="primary", use_container_width=True):
+                try:
+                    supabase.table("productos_maestro").delete().eq("id", insumo_id).execute()
+                    st.success(f"Insumo '{insumo_a_modificar}' eliminado correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al eliminar: {e}")
+                    
+        with col_ed2:
+            with st.expander("✏️ Editar Insumo"):
+                with st.form("form_editar"):
+                    e_cod = st.text_input("Código SAP", value=insumo_data.get('codigo_sap', ''))
+                    # Buscar el índice seguro de la categoría
+                    lista_cat = ["Carnicos", "Quesos", "Salsas", "Vegetales", "Preps", "Limpieza", "Otros", "Masas", "Cajas", "Gaseosas"]
+                    try:
+                        idx_cat = lista_cat.index(insumo_data['categoria'])
+                    except:
+                        idx_cat = 0
+                        
+                    e_cat = st.selectbox("Categoría", lista_cat, index=idx_cat)
+                    e_r = st.text_input("Recepción (R)", value=insumo_data.get('vida_recepcion', ''))
+                    e_p = st.text_input("Preparación (P)", value=insumo_data.get('vida_preparacion', ''))
+                    e_l = st.text_input("Línea (L)", value=insumo_data.get('vida_linea', ''))
+                    
+                    val_kg = float(insumo_data.get('paquete_kg', 1.0))
+                    if pd.isna(val_kg): val_kg = 1.0
+                    e_kg = st.number_input("Factor Kg", value=val_kg)
+                    
+                    if st.form_submit_button("💾 Guardar Cambios"):
+                        try:
+                            supabase.table("productos_maestro").update({
+                                "codigo_sap": e_cod,
+                                "categoria": e_cat,
+                                "vida_recepcion": e_r,
+                                "vida_preparacion": e_p,
+                                "vida_linea": e_l,
+                                "paquete_kg": e_kg
+                            }).eq("id", insumo_id).execute()
+                            st.success("¡Insumo actualizado exitosamente!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al actualizar: {e}")
+
     else:
         st.info("Catálogo vacío.")
 
