@@ -164,7 +164,11 @@ elif menu == "📦 Catálogo Maestro":
             with c3:
                 vida_l = st.text_input("Línea (L) - Ej: '11:59', '1'")
                 
-            paquete_kg = st.number_input("Factor de Conversión (Kg por caja/paquete para SAP)", min_value=0.0, value=1.0, step=0.1)
+            col_bot1, col_bot2 = st.columns(2)
+            with col_bot1:
+                paquete_kg = st.number_input("Factor de Conversión (Kg por caja/paquete para SAP)", min_value=0.0, value=1.0, step=0.1)
+            with col_bot2:
+                consumo = st.number_input("Consumo Diario Promedio (Memoria)", min_value=0.0, value=0.0, step=1.0)
             
             if st.form_submit_button("Guardar en Catálogo"):
                 if desc.strip() == "":
@@ -178,7 +182,8 @@ elif menu == "📦 Catálogo Maestro":
                             "vida_recepcion": vida_r,
                             "vida_preparacion": vida_p,
                             "vida_linea": vida_l,
-                            "paquete_kg": paquete_kg
+                            "paquete_kg": paquete_kg,
+                            "consumo_diario": consumo
                         }).execute()
                         st.success(f"Insumo '{desc}' guardado correctamente.")
                         st.rerun()
@@ -224,9 +229,15 @@ elif menu == "📦 Catálogo Maestro":
                     e_p = st.text_input("Preparación (P)", value=insumo_data.get('vida_preparacion', ''))
                     e_l = st.text_input("Línea (L)", value=insumo_data.get('vida_linea', ''))
                     
-                    val_kg = float(insumo_data.get('paquete_kg', 1.0))
-                    if pd.isna(val_kg): val_kg = 1.0
-                    e_kg = st.number_input("Factor Kg", value=val_kg)
+                    col_ed1, col_ed2 = st.columns(2)
+                    with col_ed1:
+                        val_kg = float(insumo_data.get('paquete_kg', 1.0))
+                        if pd.isna(val_kg): val_kg = 1.0
+                        e_kg = st.number_input("Factor Kg", value=val_kg)
+                    with col_ed2:
+                        val_con = float(insumo_data.get('consumo_diario', 0.0))
+                        if pd.isna(val_con): val_con = 0.0
+                        e_con = st.number_input("Consumo Diario", value=val_con)
                     
                     if st.form_submit_button("💾 Guardar Cambios"):
                         try:
@@ -236,7 +247,8 @@ elif menu == "📦 Catálogo Maestro":
                                 "vida_recepcion": e_r,
                                 "vida_preparacion": e_p,
                                 "vida_linea": e_l,
-                                "paquete_kg": e_kg
+                                "paquete_kg": e_kg,
+                                "consumo_diario": e_con
                             }).eq("id", insumo_id).execute()
                             st.success("¡Insumo actualizado exitosamente!")
                             st.rerun()
@@ -269,8 +281,9 @@ elif menu == "📊 Pedidos DRP":
         st.caption("📝 Tip: Puedes copiar desde tu Excel y pegar directamente en las columnas 'Consumo Diario', 'Stock SAP' y 'Tránsito'.")
         
         # Preparamos el dataframe para el editor
-        df_editor = df_cat[['codigo_sap', 'descripcion', 'paquete_kg']].copy()
-        df_editor['Consumo Diario Promedio'] = 0.0
+        df_editor = df_cat[['codigo_sap', 'descripcion', 'paquete_kg', 'consumo_diario']].copy()
+        df_editor.rename(columns={'consumo_diario': 'Consumo Diario Promedio'}, inplace=True)
+        df_editor['Consumo Diario Promedio'] = pd.to_numeric(df_editor['Consumo Diario Promedio'], errors='coerce').fillna(0.0)
         df_editor['Stock SAP'] = 0.0
         df_editor['Tránsito'] = 0.0
         
@@ -288,6 +301,17 @@ elif menu == "📊 Pedidos DRP":
             hide_index=True,
             use_container_width=True
         )
+        
+        if st.button("💾 Guardar Consumos en Memoria (Nube)"):
+            with st.spinner("Guardando..."):
+                try:
+                    for index, row in edited_df.iterrows():
+                        supabase.table("productos_maestro").update({
+                            "consumo_diario": float(row['Consumo Diario Promedio'])
+                        }).eq("codigo_sap", row['codigo_sap']).execute()
+                    st.success("¡Consumos guardados! ZailasPH los recordará para tu próximo pedido.")
+                except Exception as e:
+                    st.error(f"Error al guardar: {e}")
         
         st.markdown("---")
         st.subheader("📦 Resultado: Pedido Sugerido para ME51N")
