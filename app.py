@@ -274,6 +274,9 @@ elif menu == "📊 Pedidos DRP":
         
         df_cat = df_maestro[df_maestro['categoria'] == cat_ped].copy()
         
+        # Filtramos los insumos que no tienen código SAP (como los Preps o artículos de limpieza de tienda)
+        # para que no aparezcan como 'None' en el módulo de pedidos
+        df_cat = df_cat[df_cat['codigo_sap'].notna() & (df_cat['codigo_sap'] != "")]
         st.subheader("Configuración de Días")
         dias_a_cubrir = st.number_input("Días de Inventario a Cubrir (Días hasta el PRÓXIMO ingreso después de este)", min_value=1.0, value=3.0, step=0.5)
         
