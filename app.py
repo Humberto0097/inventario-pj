@@ -54,8 +54,8 @@ st.sidebar.markdown("---")
 menu = st.sidebar.radio("Navegación", [
     "🏷️ Calculadora de Fechados",
     "📦 Catálogo Maestro",
-    "📊 Pedidos DRP (Próximamente)",
-    "📉 Varianza (Próximamente)"
+    "📊 Pedidos DRP",
+    "📉 Varianza de Consumo"
 ])
 
 st.sidebar.markdown("---")
@@ -246,7 +246,7 @@ elif menu == "📦 Catálogo Maestro":
     else:
         st.info("Catálogo vacío.")
 
-elif menu == "📊 Pedidos DRP (Próximamente)":
+elif menu == "📊 Pedidos DRP":
     st.title("📊 Módulo de Pedidos (DRP Inteligente)")
     st.markdown("Copia y pega la data de SAP. ZailasPH calculará el pedido sugerido al instante.")
     
@@ -302,6 +302,43 @@ elif menu == "📊 Pedidos DRP (Próximamente)":
         # Mostrar tabla final limpia
         st.dataframe(resultado_df[['codigo_sap', 'descripcion', 'Pedido (Unidades)']], use_container_width=True, hide_index=True)
 
-else:
-    st.title("🚧 Módulo en Construcción")
-    st.markdown("Estamos construyendo esta sección (Fase 2). ¡Pronto ZailasPH calculará las varianzas de consumo aquí!")
+elif menu == "📉 Varianza de Consumo":
+    st.title("📉 Varianza de Consumo (MB51)")
+    st.markdown("Pega aquí tu exportación de SAP (MB51) de los **últimos 28 días** para calcular tu Consumo Diario Promedio real.")
+    
+    st.info("💡 **Clases de movimiento consideradas:** Ajustes (701-702), Receta (951-952), Merma (957-958), Refrigerio (967-968) y Consumo Interno (975-976).")
+    
+    # Editor para pegar data de MB51
+    df_mb51 = pd.DataFrame(columns=["Código SAP", "Insumo", "Clase Mov.", "Cantidad"])
+    
+    st.caption("📝 Tip: Selecciona las 4 columnas de tu Excel de SAP (Material, Texto, CmMv, Cantidad) y pégalas aquí:")
+    edited_mb51 = st.data_editor(df_mb51, num_rows="dynamic", use_container_width=True)
+    
+    if st.button("🚀 Calcular Consumo Diario Promedio", type="primary"):
+        if edited_mb51.empty:
+            st.warning("Pega los datos primero.")
+        else:
+            try:
+                # Filtrar solo los movimientos relevantes y convertir cantidades
+                movs_validos = ['701', '702', '951', '952', '957', '958', '967', '968', '975', '976']
+                
+                # Asegurar que Clase Mov. es string
+                edited_mb51['Clase Mov.'] = edited_mb51['Clase Mov.'].astype(str)
+                # Convertir Cantidad a numérico
+                edited_mb51['Cantidad'] = pd.to_numeric(edited_mb51['Cantidad'], errors='coerce').fillna(0)
+                
+                # Filtrar
+                df_filtrado = edited_mb51[edited_mb51['Clase Mov.'].isin(movs_validos)]
+                
+                # Agrupar por Insumo
+                resumen = df_filtrado.groupby(['Código SAP', 'Insumo'])['Cantidad'].sum().reset_index()
+                
+                # Dividir entre 28 días
+                resumen['Consumo Total (28 días)'] = resumen['Cantidad'].abs() # En SAP algunas salidas son negativas
+                resumen['Consumo Diario Promedio'] = (resumen['Consumo Total (28 días)'] / 28.0).round(2)
+                
+                st.success("✅ ¡Cálculo completado! Usa estos promedios en tu módulo de Pedidos DRP.")
+                st.dataframe(resumen[['Código SAP', 'Insumo', 'Consumo Total (28 días)', 'Consumo Diario Promedio']], use_container_width=True, hide_index=True)
+                
+            except Exception as e:
+                st.error(f"Error al calcular: Asegúrate de pegar los números correctamente. Detalle: {e}")
