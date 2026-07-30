@@ -293,14 +293,34 @@ elif menu == "📊 Pedidos DRP":
         st.subheader("📦 Resultado: Pedido Sugerido para ME51N")
         
         resultado_df = edited_df.copy()
-        # Lógica: Lo que voy a gastar en los días a cubrir, menos lo que ya tengo (Stock + Transito)
-        resultado_df['Pedido (Unidades)'] = (resultado_df['Consumo Diario Promedio'] * dias_a_cubrir) - (resultado_df['Stock SAP'] + resultado_df['Tránsito'])
         
-        # Evitar números negativos
-        resultado_df['Pedido (Unidades)'] = resultado_df['Pedido (Unidades)'].apply(lambda x: max(0, round(x, 2)))
+        # 1. Lógica base: Lo que voy a gastar en los días a cubrir, menos lo que ya tengo (Stock + Transito)
+        resultado_df['Pedido Bruto'] = (resultado_df['Consumo Diario Promedio'] * dias_a_cubrir) - (resultado_df['Stock SAP'] + resultado_df['Tránsito'])
+        
+        # 2. Evitar números negativos (si tengo más stock del que necesito, pido 0)
+        resultado_df['Pedido Bruto'] = resultado_df['Pedido Bruto'].apply(lambda x: max(0, x))
+        
+        # 3. Magia del Factor de Conversión: Redondear a la caja completa hacia arriba
+        import math
+        def redondear_a_caja(pedido, factor):
+            try:
+                factor = float(factor)
+                if factor <= 0 or math.isnan(factor):
+                    factor = 1.0
+            except:
+                factor = 1.0
+            
+            if pedido == 0:
+                return 0.0
+            
+            # Divide el pedido entre el peso de la caja, redondea al siguiente entero, y lo multiplica por el peso
+            cajas_necesarias = math.ceil(pedido / factor)
+            return cajas_necesarias * factor
+            
+        resultado_df['Pedido Exacto ME51N'] = resultado_df.apply(lambda row: redondear_a_caja(row['Pedido Bruto'], row['paquete_kg']), axis=1)
         
         # Mostrar tabla final limpia
-        st.dataframe(resultado_df[['codigo_sap', 'descripcion', 'Pedido (Unidades)']], use_container_width=True, hide_index=True)
+        st.dataframe(resultado_df[['codigo_sap', 'descripcion', 'paquete_kg', 'Pedido Bruto', 'Pedido Exacto ME51N']], use_container_width=True, hide_index=True)
 
 elif menu == "📉 Varianza de Consumo":
     st.title("📉 Varianza de Consumo (MB51)")
