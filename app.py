@@ -55,7 +55,8 @@ menu = st.sidebar.radio("Navegación", [
     "🏷️ Calculadora de Fechados",
     "📦 Catálogo Maestro",
     "📊 Pedidos DRP",
-    "📉 Varianza de Consumo"
+    "📉 Varianza de Consumo",
+    "📈 Analytics e Historial"
 ])
 
 st.sidebar.markdown("---")
@@ -125,11 +126,32 @@ if menu == "🏷️ Calculadora de Fechados":
         prod_data = df[df['descripcion'] == producto_nombre].iloc[0]
         
         col1, col2 = st.columns(2)
+        
+        # Función para generar HTML de etiqueta
+        def generar_etiqueta_html(nombre, vencimiento, etapa):
+            fecha_str = vencimiento.strftime('%d/%m/%Y')
+            hora_str = vencimiento.strftime('%I:%M %p')
+            html = f"""
+            <html><body style="font-family: Arial; width: 300px; padding: 20px; border: 2px solid black; text-align: center;">
+                <h2 style="margin:0;">{nombre}</h2>
+                <p style="margin:5px 0;"><strong>Etapa:</strong> {etapa}</p>
+                <hr/>
+                <h1 style="margin:5px 0; font-size: 32px;">{fecha_str}</h1>
+                <h2 style="margin:5px 0; font-size: 24px;">{hora_str}</h2>
+                <hr/>
+                <p style="margin:5px 0;">Emp: ____</p>
+                <script>window.print();</script>
+            </body></html>
+            """
+            return html
+
         with col1:
             st.info(f"**Vida Útil (Preparación/Abierto):** {prod_data['vida_preparacion']}")
             venc_prep = calcular_vencimiento(prod_data['vida_preparacion'])
             if venc_prep:
                 st.success(f"### Etiquetar para:\n## {venc_prep.strftime('%d/%m/%Y a las %I:%M %p')}")
+                html_prep = generar_etiqueta_html(producto_nombre, venc_prep, "Preparación")
+                st.download_button("🖨️ Imprimir Etiqueta (Prep)", data=html_prep, file_name=f"etiqueta_{producto_nombre}_prep.html", mime="text/html")
             else:
                 st.markdown("*No hay regla calculable para preparación. Revisar empaque.*")
                 
@@ -138,6 +160,8 @@ if menu == "🏷️ Calculadora de Fechados":
             venc_linea = calcular_vencimiento(prod_data['vida_linea'])
             if venc_linea:
                 st.success(f"### Etiquetar para:\n## {venc_linea.strftime('%d/%m/%Y a las %I:%M %p')}")
+                html_linea = generar_etiqueta_html(producto_nombre, venc_linea, "Línea")
+                st.download_button("🖨️ Imprimir Etiqueta (Línea)", data=html_linea, file_name=f"etiqueta_{producto_nombre}_linea.html", mime="text/html")
             else:
                 st.markdown("*No hay regla calculable para línea.*")
 
@@ -357,6 +381,27 @@ elif menu == "📊 Pedidos DRP":
         # Mostrar tabla final limpia
         st.dataframe(resultado_df[['codigo_sap', 'descripcion', 'paquete_kg', 'Pedido Bruto', 'Pedido Exacto ME51N']], use_container_width=True, hide_index=True)
 
+        st.markdown("---")
+        if st.button("💾 Guardar este Pedido en el Historial", type="primary"):
+            with st.spinner("Guardando historial en la nube..."):
+                try:
+                    fecha_hoy = datetime.datetime.now().strftime('%Y-%m-%d')
+                    insert_list = []
+                    for index, row in resultado_df.iterrows():
+                        if row['Pedido Exacto ME51N'] > 0:
+                            insert_list.append({
+                                "fecha_pedido": fecha_hoy,
+                                "codigo_sap": str(row['codigo_sap']),
+                                "descripcion": row['descripcion'],
+                                "categoria": cat_ped,
+                                "cajas_pedidas": float(row['Pedido Exacto ME51N'])
+                            })
+                    if insert_list:
+                        supabase.table("historial_pedidos").insert(insert_list).execute()
+                    st.success("✅ Pedido guardado exitosamente. Ve a la pestaña 'Analytics' para ver tus gráficos.")
+                except Exception as e:
+                    st.error(f"Error al guardar historial (Asegúrate de haber ejecutado el SQL en Supabase): {e}")
+
 elif menu == "📉 Varianza de Consumo":
     st.title("📉 Varianza de Consumo (MB51)")
     st.markdown("Pega aquí tu exportación de SAP (MB51) de los **últimos 28 días** para calcular tu Consumo Diario Promedio real.")
@@ -420,3 +465,42 @@ elif menu == "📉 Varianza de Consumo":
                     
                 except Exception as e:
                     st.error(f"Error al guardar en Supabase: {e}")
+
+elif menu == "📈 Analytics e Historial":
+    st.title("📈 Analytics e Historial de Pedidos")
+    st.markdown("Analiza la evolución de tus pedidos a lo largo del tiempo.")
+    
+    try:
+        res = supabase.table("historial_pedidos").select("*").execute()
+        if res.data:
+            df_hist = pd.DataFrame(res.data)
+            df_hist['fecha_pedido'] = pd.to_datetime(df_hist['fecha_pedido'])
+            
+            categorias = ["Todas"] + df_hist['categoria'].unique().tolist()
+            cat_filtro = st.selectbox("Filtrar por Categoría", categorias)
+            
+            if cat_filtro != "Todas":
+                df_hist = df_hist[df_hist['categoria'] == cat_filtro]
+                
+            insumos = ["Todos"] + df_hist['descripcion'].unique().tolist()
+            insumo_filtro = st.selectbox("Filtrar por Insumo", insumos)
+            
+            if insumo_filtro != "Todos":
+                df_hist = df_hist[df_hist['descripcion'] == insumo_filtro]
+                
+            if df_hist.empty:
+                st.warning("No hay datos para estos filtros.")
+            else:
+                # Agrupar por fecha y sumar cajas
+                df_agrupado = df_hist.groupby('fecha_pedido')['cajas_pedidas'].sum().reset_index()
+                df_agrupado = df_agrupado.sort_values('fecha_pedido')
+                
+                st.subheader("Evolución de Pedidos (Cajas)")
+                st.bar_chart(data=df_agrupado, x='fecha_pedido', y='cajas_pedidas')
+                
+                st.markdown("### Detalle de Pedidos")
+                st.dataframe(df_hist[['fecha_pedido', 'categoria', 'descripcion', 'cajas_pedidas']].sort_values('fecha_pedido', ascending=False), use_container_width=True, hide_index=True)
+        else:
+            st.info("Aún no hay historial de pedidos. Ve a 'Pedidos DRP' y guarda tu primer pedido.")
+    except Exception as e:
+        st.error("Error al cargar el historial. Asegúrate de haber ejecutado el código SQL para crear la tabla 'historial_pedidos' en Supabase.")
