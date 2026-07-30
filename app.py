@@ -381,8 +381,31 @@ elif menu == "📉 Varianza de Consumo":
                 resumen['Consumo Total (28 días)'] = resumen['Cantidad'].abs() # En SAP algunas salidas son negativas
                 resumen['Consumo Diario Promedio'] = (resumen['Consumo Total (28 días)'] / 28.0).round(2)
                 
-                st.success("✅ ¡Cálculo completado! Usa estos promedios en tu módulo de Pedidos DRP.")
-                st.dataframe(resumen[['Código SAP', 'Insumo', 'Consumo Total (28 días)', 'Consumo Diario Promedio']], use_container_width=True, hide_index=True)
+                # Guardar en memoria temporal de la pantalla
+                st.session_state['resumen_varianza'] = resumen
                 
             except Exception as e:
                 st.error(f"Error al calcular: Asegúrate de pegar los números correctamente. Detalle: {e}")
+
+    # Si ya calculamos la varianza, mostrar resultados y botón de guardado
+    if 'resumen_varianza' in st.session_state:
+        st.success("✅ ¡Cálculo completado! Revisa los promedios a continuación:")
+        res_df = st.session_state['resumen_varianza']
+        st.dataframe(res_df[['Código SAP', 'Insumo', 'Consumo Total (28 días)', 'Consumo Diario Promedio']], use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        if st.button("💾 Enviar todos estos consumos al Catálogo Maestro (Nube)", type="primary"):
+            with st.spinner("Inyectando nuevos consumos al cerebro de ZailasPH..."):
+                try:
+                    for index, row in res_df.iterrows():
+                        # Actualizamos Supabase con el nuevo consumo
+                        supabase.table("productos_maestro").update({
+                            "consumo_diario": float(row['Consumo Diario Promedio'])
+                        }).eq("codigo_sap", str(row['Código SAP'])).execute()
+                    
+                    st.success("🎉 ¡Misión cumplida! Tu Catálogo Maestro ya aprendió estos nuevos consumos. Puedes ir a 'Pedidos DRP' y ya estarán ahí.")
+                    # Limpiamos para evitar doble envío por error
+                    del st.session_state['resumen_varianza']
+                    
+                except Exception as e:
+                    st.error(f"Error al guardar en Supabase: {e}")
